@@ -74,10 +74,14 @@
 
     <!-- History View -->
     <div class="tab-pane fade" id="history" role="tabpanel">
-      <div class="mt-4 d-flex justify-content-between align-items-center">
-        <h5>Today's Water Level History</h5>
-        <button class="btn btn-sm btn-secondary" onclick="toggleView()">Toggle View</button>
-      </div>
+ <div class="mt-4 d-flex justify-content-between align-items-center">
+    <h5>Water Level History</h5>
+    <div class="d-flex align-items-center">
+      <input type="date" id="historyDate" class="form-control form-control-sm me-2" />
+      <button class="btn btn-sm btn-primary" onclick="applyDateFilter()">Apply</button>
+      <button class="btn btn-sm btn-secondary ms-2" onclick="toggleView()">Toggle View</button>
+    </div>
+  </div>
 
       <!-- Table View -->
       <div id="tableView">
@@ -103,101 +107,145 @@
   </div>
 </div>
 
-<script>
-  let historyData = [];
-  const tankHeightInches = 42;
+<script>let allHistoryData = []; // all fetched history data
+let historyData = [];    // filtered data
+const tankHeightInches = 42;
 
-  async function fetchData() {
-    const res = await fetch('/api/waterlevel/latest');
-    const data = await res.json();
+async function fetchData() {
+  const res = await fetch('/api/waterlevel/latest');
+  const data = await res.json();
 
-    const level1 = data.tank1_level / 2.54;
-    const level2 = data.tank2_level / 2.54;
-    const updated = new Date(data.timestamp).toLocaleTimeString();
+  const level1 = data.tank1_level / 2.54;
+  const level2 = data.tank2_level / 2.54;
+  const updated = new Date(data.timestamp).toLocaleTimeString();
 
-    document.getElementById('levelText1').innerText = level1.toFixed(1);
-    document.getElementById('levelText2').innerText = level2.toFixed(1);
-    document.getElementById('updatedTime').innerText = updated;
+  document.getElementById('levelText1').innerText = level1.toFixed(1);
+  document.getElementById('levelText2').innerText = level2.toFixed(1);
+  document.getElementById('updatedTime').innerText = updated;
 
-    setLevelFill('levelFill1', level1);
-    setLevelFill('levelFill2', level2);
+  setLevelFill('levelFill1', level1);
+  setLevelFill('levelFill2', level2);
+}
+
+function setLevelFill(id, inches) {
+  const percent = Math.min((inches / tankHeightInches) * 100, 100);
+  const fill = document.getElementById(id);
+  fill.style.height = `${percent}%`;
+  fill.className = 'level-fill';
+  if (percent < 25) fill.classList.add('bg-danger');
+  else if (percent < 50) fill.classList.add('bg-warning');
+  else fill.classList.add('bg-success');
+}
+
+async function fetchHistory() {
+  const res = await fetch('/api/waterlevel/history');
+  const history = await res.json();
+
+  // store all data with timestamps and inches conversion
+  allHistoryData = history.map(h => ({
+    timestamp: new Date(h.timestamp),
+    tank1: h.tank1_level / 2.54,
+    tank2: h.tank2_level / 2.54
+  }));
+
+  // Default date filter to today's date
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById('historyDate').value = today;
+  filterHistoryByDate(today);
+}
+
+function applyDateFilter() {
+  const selectedDate = document.getElementById('historyDate').value;
+  filterHistoryByDate(selectedDate);
+}
+
+function filterHistoryByDate(dateStr) {
+  historyData = allHistoryData.filter(h =>
+    h.timestamp.toISOString().startsWith(dateStr)
+  );
+
+  updateTable(historyData);
+  renderChart(historyData);
+}
+
+function updateTable(data) {
+  const tbody = document.getElementById('historyBody');
+  tbody.innerHTML = '';
+  if (data.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="3" class="text-center">No Data</td></tr>`;
+    return;
   }
+  data.forEach(h => {
+    tbody.innerHTML += `<tr>
+      <td>${h.timestamp.toLocaleTimeString()}</td>
+      <td>${h.tank1.toFixed(1)}</td>
+      <td>${h.tank2.toFixed(1)}</td>
+    </tr>`;
+  });
+}
 
-  function setLevelFill(id, inches) {
-    const percent = Math.min((inches / tankHeightInches) * 100, 100);
-    const fill = document.getElementById(id);
-    fill.style.height = `${percent}%`;
-    fill.className = 'level-fill';
-    if (percent < 25) fill.classList.add('bg-danger');
-    else if (percent < 50) fill.classList.add('bg-warning');
-    else fill.classList.add('bg-success');
+function renderChart(data) {
+  // Aggregate per hour (average)
+  const hourlyMap = {};
+  data.forEach(h => {
+    const hourKey = h.timestamp.getHours();
+    if (!hourlyMap[hourKey]) {
+      hourlyMap[hourKey] = { count: 0, tank1: 0, tank2: 0 };
+    }
+    hourlyMap[hourKey].count++;
+    hourlyMap[hourKey].tank1 += h.tank1;
+    hourlyMap[hourKey].tank2 += h.tank2;
+  });
+
+  const labels = Object.keys(hourlyMap).map(h => `${h}:00`);
+  const tank1Data = Object.values(hourlyMap).map(v => v.tank1 / v.count);
+  const tank2Data = Object.values(hourlyMap).map(v => v.tank2 / v.count);
+
+  const ctx = document.getElementById('historyChart').getContext('2d');
+  if (window.historyChartInstance) {
+    window.historyChartInstance.destroy();
   }
-
-  async function fetchHistory() {
-    const res = await fetch('/api/waterlevel/history');
-    const history = await res.json();
-
-    const today = new Date().toISOString().slice(0, 10);
-    historyData = history
-      .filter(h => h.timestamp.startsWith(today))
-      .map(h => ({
-        time: new Date(h.timestamp).toLocaleTimeString(),
-        tank1: h.tank1_level / 2.54,
-        tank2: h.tank2_level / 2.54
-      }));
-
-    const tbody = document.getElementById('historyBody');
-    tbody.innerHTML = '';
-    historyData.forEach(h => {
-      tbody.innerHTML += `<tr><td>${h.time}</td><td>${h.tank1.toFixed(1)}</td><td>${h.tank2.toFixed(1)}</td></tr>`;
-    });
-
-    renderChart();
-  }
-
-  function toggleView() {
-    const table = document.getElementById('tableView');
-    const graph = document.getElementById('graphView');
-    table.style.display = table.style.display === 'none' ? 'block' : 'none';
-    graph.style.display = graph.style.display === 'none' ? 'block' : 'none';
-  }
-
-  function renderChart() {
-    const ctx = document.getElementById('historyChart').getContext('2d');
-    new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: historyData.map(e => e.time),
-        datasets: [
-          {
-            label: 'Tank 1 (in)',
-            data: historyData.map(e => e.tank1),
-            borderColor: '#2196f3',
-            fill: false,
-            tension: 0.1
-          },
-          {
-            label: 'Tank 2 (in)',
-            data: historyData.map(e => e.tank2),
-            borderColor: '#ff9800',
-            fill: false,
-            tension: 0.1
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        scales: {
-          y: {
-            beginAtZero: true,
-            suggestedMax: tankHeightInches
-          }
+  window.historyChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Tank 1 (in)',
+          data: tank1Data,
+          borderColor: '#2196f3',
+          fill: false,
+          tension: 0.1
+        },
+        {
+          label: 'Tank 2 (in)',
+          data: tank2Data,
+          borderColor: '#ff9800',
+          fill: false,
+          tension: 0.1
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      scales: {
+        y: {
+          beginAtZero: true,
+          suggestedMax: tankHeightInches
         }
       }
-    });
-  }
+    }
+  });
+}
 
-  function refreshData() {
+function toggleView() {
+  const table = document.getElementById('tableView');
+  const graph = document.getElementById('graphView');
+  table.style.display = table.style.display === 'none' ? 'block' : 'none';
+  graph.style.display = graph.style.display === 'none' ? 'block' : 'none';
+}
+
+function refreshData() {
   const btn = document.getElementById("refreshBtn");
   const icon = document.getElementById("refreshIcon");
   const text = document.getElementById("refreshText");
@@ -211,14 +259,15 @@
       btn.disabled = false;
       icon.classList.add("d-none");
       text.textContent = "Refresh";
-    }, 500); // small delay for user feedback
+    }, 500);
   });
 }
 
+// Initial load
+fetchData();
+fetchHistory();
+setInterval(fetchData, 10000);
 
-  fetchData();
-  fetchHistory();
-  setInterval(fetchData, 10000);
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
