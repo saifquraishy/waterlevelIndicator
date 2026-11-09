@@ -16,6 +16,10 @@ function migrate(raw: unknown): AnalyticsConfigStore {
   const base = defaultAnalyticsConfigStore();
   if (!raw || typeof raw !== 'object') return base;
   const obj = raw as Partial<AnalyticsConfigStore>;
+  // v2: IoT-friendly cumulative detection defaults — refresh stored v1 thresholds
+  if ((obj.version ?? 1) < 2) {
+    return base;
+  }
   return {
     version: ANALYTICS_CONFIG_SCHEMA_VERSION,
     thresholds: {

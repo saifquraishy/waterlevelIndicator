@@ -1,5 +1,5 @@
 import type { AnalyticsThresholds, FilteredReading } from '../types/analytics.types';
-import type { TrendState, WaterEvent } from '../types/events.types';
+import type { WaterEvent } from '../types/events.types';
 import type { TankId } from '../types/tank.types';
 import { scoreConfidence } from './confidenceCalculator';
 
@@ -9,7 +9,7 @@ interface ActiveEvent {
   startLevel: number;
   lastTs: number;
   lastLevel: number;
-  confirmCount: number;
+  extremeLevel: number;
   readingCount: number;
   gapCount: number;
   anomalyCount: number;
@@ -29,16 +29,18 @@ function closeEvent(
   thresholds: AnalyticsThresholds,
   incomplete: boolean
 ): WaterEvent | null {
-  const durationSec = (endTs - active.startTs) / 1000;
-  if (!incomplete && durationSec < thresholds.minEventDurationSec) return null;
+  const durationSec = Math.max(0, (endTs - active.startTs) / 1000);
+  const end = active.type === 'FILLING' ? Math.max(endLevel, active.extremeLevel) : Math.min(endLevel, active.extremeLevel);
+  const delta = end - active.startLevel;
+  const netMove = active.type === 'FILLING' ? delta : -delta;
 
-  const delta = endLevel - active.startLevel;
-  const volume =
-    litresPerInch == null
-      ? null
-      : active.type === 'FILLING'
-        ? Math.max(0, delta) * litresPerInch
-        : Math.max(0, -delta) * litresPerInch;
+  // Ignore tiny closed events unless incomplete at range end with meaningful movement
+  if (!incomplete && durationSec < thresholds.minEventDurationSec && netMove < thresholds.minRefillRiseIn) {
+    return null;
+  }
+  if (netMove < thresholds.noiseToleranceIn) return null;
+
+  const volume = litresPerInch == null ? null : Math.max(0, netMove) * litresPerInch;
 
   return {
     id: uid(active.type.toLowerCase()),
@@ -47,7 +49,7 @@ function closeEvent(
     startTs: active.startTs,
     endTs,
     startLevelIn: active.startLevel,
-    endLevelIn: endLevel,
+    endLevelIn: end,
     durationSec,
     estimatedVolumeL: volume,
     confidence: scoreConfidence({
@@ -62,8 +64,8 @@ function closeEvent(
 }
 
 /**
- * State machine over filtered readings for one tank.
- * Confirms FILLING/CONSUMING with consecutive readings and ends on sustained stability.
+ * Detect FILLING / CONSUMING using cumulative level change from a local
+ * trough/peak — not only large per-sample jumps (which miss slow IoT drains/fills).
  */
 export function detectEvents(
   tankId: TankId,
@@ -72,14 +74,26 @@ export function detectEvents(
   litresPerInch: number | null
 ): WaterEvent[] {
   const events: WaterEvent[] = [];
-  let state: TrendState = 'STABLE';
   let active: ActiveEvent | null = null;
-  let riseStreak = 0;
-  let fallStreak = 0;
   let prevValid: FilteredReading | null = null;
+
+  // Track local extremum while stable, to backdate event starts
+  let troughLevel = 0;
+  let troughTs = 0;
+  let peakLevel = 0;
+  let peakTs = 0;
+  let samplesSinceAnchor = 0;
 
   const endStableNeeded = (type: 'FILLING' | 'CONSUMING') =>
     type === 'FILLING' ? thresholds.refillStableDurationSec : thresholds.consumptionStableDurationSec;
+
+  const resetAnchors = (level: number, ts: number) => {
+    troughLevel = level;
+    troughTs = ts;
+    peakLevel = level;
+    peakTs = ts;
+    samplesSinceAnchor = 0;
+  };
 
   for (const r of filtered) {
     if (prevValid && r.ts - prevValid.ts > thresholds.maxDataGapSec * 1000) {
@@ -88,7 +102,7 @@ export function detectEvents(
           tankId,
           active,
           prevValid.ts,
-          active.lastLevel,
+          active.extremeLevel,
           litresPerInch,
           thresholds,
           true
@@ -110,9 +124,9 @@ export function detectEvents(
         incomplete: false,
         notes: 'Reading gap exceeded maximum',
       });
-      state = 'DATA_GAP';
-      riseStreak = 0;
-      fallStreak = 0;
+      if (r.valid && r.filteredIn != null) resetAnchors(r.filteredIn, r.ts);
+      prevValid = r.valid ? r : prevValid;
+      continue;
     }
 
     if (!r.valid || r.filteredIn == null) {
@@ -130,75 +144,82 @@ export function detectEvents(
         confidence: 'LOW',
         incomplete: false,
       });
-      state = 'SENSOR_ANOMALY';
       continue;
     }
 
     const level = r.filteredIn;
-    if (prevValid?.filteredIn != null) {
-      const delta = level - prevValid.filteredIn;
-      if (delta >= thresholds.minRefillRiseIn) {
-        riseStreak += 1;
-        fallStreak = 0;
-      } else if (delta <= -thresholds.minConsumptionFallIn) {
-        fallStreak += 1;
-        riseStreak = 0;
-      } else if (Math.abs(delta) <= thresholds.noiseToleranceIn) {
-        // stable-ish
-      } else {
-        riseStreak = 0;
-        fallStreak = 0;
-      }
+
+    if (!prevValid || prevValid.filteredIn == null) {
+      resetAnchors(level, r.ts);
+      prevValid = r;
+      continue;
     }
 
+    samplesSinceAnchor += 1;
+
     if (!active) {
-      if (riseStreak >= thresholds.confirmationReadings) {
-        state = 'FILLING';
+      troughLevel = Math.min(troughLevel, level);
+      if (level <= troughLevel) troughTs = r.ts;
+      peakLevel = Math.max(peakLevel, level);
+      if (level >= peakLevel) peakTs = r.ts;
+
+      const riseFromTrough = level - troughLevel;
+      const fallFromPeak = peakLevel - level;
+
+      // Need enough samples after the extremum so we don't fire on a single spike
+      const confirmed = samplesSinceAnchor >= thresholds.confirmationReadings;
+
+      if (confirmed && riseFromTrough >= thresholds.minRefillRiseIn && level >= prevValid.filteredIn - thresholds.noiseToleranceIn) {
         active = {
           type: 'FILLING',
-          startTs: r.ts,
-          startLevel: level,
+          startTs: troughTs,
+          startLevel: troughLevel,
           lastTs: r.ts,
           lastLevel: level,
-          confirmCount: riseStreak,
+          extremeLevel: level,
           readingCount: 1,
           gapCount: 0,
           anomalyCount: 0,
           stableSince: null,
         };
-      } else if (fallStreak >= thresholds.confirmationReadings) {
-        state = 'CONSUMING';
+      } else if (
+        confirmed &&
+        fallFromPeak >= thresholds.minConsumptionFallIn &&
+        level <= prevValid.filteredIn + thresholds.noiseToleranceIn
+      ) {
         active = {
           type: 'CONSUMING',
-          startTs: r.ts,
-          startLevel: level,
+          startTs: peakTs,
+          startLevel: peakLevel,
           lastTs: r.ts,
           lastLevel: level,
-          confirmCount: fallStreak,
+          extremeLevel: level,
           readingCount: 1,
           gapCount: 0,
           anomalyCount: 0,
           stableSince: null,
         };
-      } else {
-        state = 'STABLE';
       }
     } else {
+      const prevExtreme = active.extremeLevel;
       active.lastTs = r.ts;
       active.lastLevel = level;
       active.readingCount += 1;
 
-      const movingWithEvent =
-        active.type === 'FILLING'
-          ? level >= active.lastLevel - thresholds.noiseToleranceIn
-          : level <= active.lastLevel + thresholds.noiseToleranceIn;
+      if (active.type === 'FILLING') {
+        active.extremeLevel = Math.max(active.extremeLevel, level);
+      } else {
+        active.extremeLevel = Math.min(active.extremeLevel, level);
+      }
 
-      // Re-evaluate delta vs previous for stability ending
-      const deltaFromPrev =
-        prevValid?.filteredIn != null ? level - prevValid.filteredIn : 0;
+      const deltaFromPrev = level - prevValid.filteredIn;
+      const stillProgressing =
+        active.type === 'FILLING'
+          ? level >= prevExtreme - thresholds.noiseToleranceIn
+          : level <= prevExtreme + thresholds.noiseToleranceIn;
       const isStableNow = Math.abs(deltaFromPrev) <= thresholds.noiseToleranceIn;
 
-      if (isStableNow && movingWithEvent) {
+      if (isStableNow && stillProgressing) {
         if (active.stableSince == null) active.stableSince = r.ts;
         const stableFor = (r.ts - active.stableSince) / 1000;
         if (stableFor >= endStableNeeded(active.type)) {
@@ -206,20 +227,34 @@ export function detectEvents(
             tankId,
             active,
             r.ts,
-            level,
+            active.extremeLevel,
             litresPerInch,
             thresholds,
             false
           );
           if (closed) events.push(closed);
+          resetAnchors(level, r.ts);
           active = null;
-          state = 'STABLE';
-          riseStreak = 0;
-          fallStreak = 0;
         }
+      } else if (
+        (active.type === 'FILLING' && level < active.extremeLevel - Math.max(thresholds.minConsumptionFallIn, thresholds.noiseToleranceIn * 2)) ||
+        (active.type === 'CONSUMING' && level > active.extremeLevel + Math.max(thresholds.minRefillRiseIn, thresholds.noiseToleranceIn * 2))
+      ) {
+        // Direction reversed meaningfully — close current event and re-anchor
+        const closed = closeEvent(
+          tankId,
+          active,
+          prevValid.ts,
+          active.extremeLevel,
+          litresPerInch,
+          thresholds,
+          false
+        );
+        if (closed) events.push(closed);
+        resetAnchors(level, r.ts);
+        active = null;
       } else {
         active.stableSince = null;
-        state = active.type;
       }
     }
 
@@ -231,7 +266,7 @@ export function detectEvents(
       tankId,
       active,
       prevValid.ts,
-      prevValid.filteredIn,
+      active.extremeLevel,
       litresPerInch,
       thresholds,
       true
@@ -239,6 +274,5 @@ export function detectEvents(
     if (closed) events.push(closed);
   }
 
-  void state;
   return events;
 }

@@ -30,10 +30,10 @@ export function aggregateDaily(
 
     const dayEvents = events.filter((e) => dayKeyKolkata(e.startTs) === dayKey);
     const consumptionL = dayEvents
-      .filter((e) => e.type === 'CONSUMING' && e.estimatedVolumeL != null && e.confidence !== 'LOW')
+      .filter((e) => e.type === 'CONSUMING' && e.estimatedVolumeL != null)
       .reduce((s, e) => s + (e.estimatedVolumeL as number), 0);
     const netRefillL = dayEvents
-      .filter((e) => e.type === 'FILLING' && e.estimatedVolumeL != null && e.confidence !== 'LOW')
+      .filter((e) => e.type === 'FILLING' && e.estimatedVolumeL != null)
       .reduce((s, e) => s + (e.estimatedVolumeL as number), 0);
     const refillEvents = dayEvents.filter((e) => e.type === 'FILLING').length;
     const fillingDurationSec = dayEvents

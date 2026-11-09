@@ -222,6 +222,19 @@ export function AnalyticsPage() {
             <Link to="/settings">Settings</Link>.
           </div>
         )}
+        {anyConfigured &&
+          !loading &&
+          overview.configuredCount > 0 &&
+          overview.consumption === 0 &&
+          overview.refill === 0 &&
+          overview.pumps === 0 && (
+            <div className="status-ok">
+              No fill/consumption events detected in this range yet. That is normal if levels stayed
+              nearly flat. Try a longer date range, or in Settings lower{' '}
+              <code>minConsumptionFallIn</code> / <code>minRefillRiseIn</code> and raise{' '}
+              <code>maxDataGapSec</code> if your device posts infrequently.
+            </div>
+          )}
       </section>
 
       <section className="panel">

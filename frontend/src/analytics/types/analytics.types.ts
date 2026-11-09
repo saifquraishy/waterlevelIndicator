@@ -14,7 +14,7 @@ export interface AnalyticsThresholds {
   minEventDurationSec: number;
 }
 
-export const ANALYTICS_CONFIG_SCHEMA_VERSION = 1;
+export const ANALYTICS_CONFIG_SCHEMA_VERSION = 2;
 
 export interface AnalyticsConfigStore {
   version: number;
@@ -22,18 +22,19 @@ export interface AnalyticsConfigStore {
   updatedAt: string;
 }
 
+/** Defaults tuned for typical ESP sampling (often 1–5 min) and gradual level change. */
 export function defaultThresholds(): AnalyticsThresholds {
   return {
     samplingIntervalSec: 60,
     medianWindow: 3,
-    minRefillRiseIn: 0.5,
-    minConsumptionFallIn: 0.5,
-    confirmationReadings: 3,
+    minRefillRiseIn: 0.4,
+    minConsumptionFallIn: 0.4,
+    confirmationReadings: 2,
     refillStableDurationSec: 120,
     consumptionStableDurationSec: 180,
-    noiseToleranceIn: 0.2,
-    maxDataGapSec: 180,
-    minEventDurationSec: 120,
+    noiseToleranceIn: 0.15,
+    maxDataGapSec: 900, // allow slower / bursty device posts
+    minEventDurationSec: 60,
   };
 }
 
@@ -71,7 +72,7 @@ export interface TrendSample {
 }
 
 export interface HourlyBucket {
-  hourKey: string; // Asia/Kolkata yyyy-mm-ddTHH
+  hourKey: string;
   label: string;
   consumptionL: number;
   netRefillL: number;
@@ -82,7 +83,7 @@ export interface HourlyBucket {
 }
 
 export interface DailyBucket {
-  dayKey: string; // Asia/Kolkata yyyy-mm-dd
+  dayKey: string;
   openingLevelIn: number | null;
   closingLevelIn: number | null;
   openingVolumeL: number | null;
