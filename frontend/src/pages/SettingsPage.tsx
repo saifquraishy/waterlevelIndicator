@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAnalyticsConfig } from '../analytics/hooks/useAnalyticsConfig';
 import { useTankConfig } from '../analytics/hooks/useTankConfig';
 import {
@@ -31,7 +31,7 @@ function numOrNull(v: string): number | null {
 }
 
 export function SettingsPage() {
-  const { store: tankStore, save: saveTanks } = useTankConfig();
+  const { store: tankStore, save: saveTanks, resetToSiteDefaults } = useTankConfig();
   const { store: analyticsStore, save: saveAnalytics, resetTank } = useAnalyticsConfig();
   const [activeTank, setActiveTank] = useState<TankId>('tank1');
   const [draftTank, setDraftTank] = useState<TankConfig>(tankStore.tanks.tank1);
@@ -41,11 +41,21 @@ export function SettingsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [latestIn, setLatestIn] = useState<number | null>(null);
 
+  useEffect(() => {
+    setDraftTank(tankStore.tanks[activeTank]);
+  }, [tankStore, activeTank]);
+
   function selectTank(id: TankId) {
     setActiveTank(id);
     setDraftTank(tankStore.tanks[id]);
     setDraftThresholds(analyticsStore.thresholds[id]);
     setMessage(null);
+  }
+
+  function onResetSiteDefaults() {
+    const next = resetToSiteDefaults();
+    setDraftTank(next.tanks[activeTank]);
+    setMessage('Restored site default internal tank dimensions for Tank 1 and Tank 2.');
   }
 
   const metrics = useMemo(() => deriveTankMetrics(draftTank), [draftTank]);
@@ -96,8 +106,8 @@ export function SettingsPage() {
       <section className="panel">
         <h2>Settings</h2>
         <p className="lead">
-          Tank dimensions and analytics thresholds are stored in this browser (versioned localStorage).
-          Litre-based analytics stay disabled until each tank is fully configured.
+          Dimensions are the internal (inside) tank sizes. Defaults are preloaded for this site and
+          stored in this browser only (not in the database). You can edit and save locally anytime.
         </p>
         <div className="toolbar">
           <button
@@ -117,13 +127,19 @@ export function SettingsPage() {
           <button type="button" className="btn btn-ghost" onClick={() => void refreshLatest()}>
             Load latest level
           </button>
+          <button type="button" className="btn btn-ghost" onClick={onResetSiteDefaults}>
+            Reset tank defaults
+          </button>
         </div>
         {message && <div className="status-ok">{message}</div>}
       </section>
 
       <section className="panel">
         <h2>Tank configuration — {draftTank.name}</h2>
-        <p className="lead">Independent overhead/underground rectangular or cylindrical tanks.</p>
+        <p className="lead">
+          Overhead rectangular tanks (internal dimensions). Site defaults: Tank 1 = 4.75×4.5×3.5 ft
+          (1–40 in water); Tank 2 = 7×4×3 ft (1–35 in water).
+        </p>
 
         <div className="form-grid">
           <label>

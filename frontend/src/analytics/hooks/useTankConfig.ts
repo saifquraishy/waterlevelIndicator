@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import { loadTankConfig, saveTankConfig, subscribeTankConfig } from '../services/tankConfigService';
+import {
+  loadTankConfig,
+  resetTanksToSiteDefaults,
+  saveTankConfig,
+  subscribeTankConfig,
+} from '../services/tankConfigService';
 import type { TankConfigStore } from '../types/tank.types';
 
 export function useTankConfig() {
@@ -12,5 +17,10 @@ export function useTankConfig() {
     tanks: store.tanks,
     save: (next: TankConfigStore) => setStore(saveTankConfig(next)),
     reload: () => setStore(loadTankConfig()),
+    resetToSiteDefaults: () => {
+      const next = resetTanksToSiteDefaults();
+      setStore(next);
+      return next;
+    },
   };
 }

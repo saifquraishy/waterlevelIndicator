@@ -17,6 +17,12 @@ function migrate(raw: unknown): TankConfigStore {
   const obj = raw as Partial<TankConfigStore>;
   const version = obj.version ?? 1;
   if (version > TANK_CONFIG_SCHEMA_VERSION) return base;
+
+  // v2: seed installed tank internal dimensions for users who had empty/unconfigured v1
+  if (version < 2) {
+    return base;
+  }
+
   return {
     version: TANK_CONFIG_SCHEMA_VERSION,
     tanks: {
@@ -48,6 +54,10 @@ export function updateTank(id: TankId, patch: Partial<TankConfig>): TankConfigSt
   const current = loadTankConfig();
   current.tanks[id] = { ...current.tanks[id], ...patch, id };
   return saveTankConfig(current);
+}
+
+export function resetTanksToSiteDefaults(): TankConfigStore {
+  return saveTankConfig(defaultTankConfigStore());
 }
 
 export function subscribeTankConfig(listener: Listener): () => void {
