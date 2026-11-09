@@ -10,6 +10,7 @@ import {
   YAxis,
 } from 'recharts';
 import { fetchHistory, type WaterReading } from '../api/client';
+import { useIsMobile } from '../hooks/useIsMobile';
 import {
   cmToInches,
   endOfLocalDayIso,
@@ -26,6 +27,7 @@ export function HistoryPage() {
   const [view, setView] = useState<ViewMode>('table');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const isMobile = useIsMobile();
 
   async function load(selectedDate: string) {
     setLoading(true);
@@ -125,12 +127,23 @@ export function HistoryPage() {
             <div className="empty">No data for this date</div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
+              <LineChart
+                data={chartData}
+                margin={
+                  isMobile
+                    ? { top: 8, right: 8, left: -12, bottom: 8 }
+                    : { top: 10, right: 16, left: 0, bottom: 8 }
+                }
+              >
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(18,37,46,0.12)" />
-                <XAxis dataKey="label" />
-                <YAxis domain={[0, TANK_HEIGHT_INCHES]} />
+                <XAxis dataKey="label" tick={{ fontSize: isMobile ? 10 : 12 }} />
+                <YAxis
+                  domain={[0, TANK_HEIGHT_INCHES]}
+                  width={isMobile ? 36 : 48}
+                  tick={{ fontSize: isMobile ? 10 : 12 }}
+                />
                 <Tooltip />
-                <Legend />
+                <Legend wrapperStyle={{ fontSize: isMobile ? 12 : 14 }} />
                 <Line type="monotone" dataKey="tank1" name="Tank 1 (in)" stroke="#1a9bb0" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="tank2" name="Tank 2 (in)" stroke="#d97706" strokeWidth={2} dot={false} />
               </LineChart>
