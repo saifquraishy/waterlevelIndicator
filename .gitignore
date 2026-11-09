@@ -1,0 +1,8 @@
+﻿node_modules/
+.env
+.DS_Store
+*.log
+waterlevels.db
+frontend/node_modules/
+frontend/dist/
+frontend/.env
