@@ -598,6 +598,153 @@ table.data th {
   border-color: rgba(26, 155, 176, 0.3);
 }
 
+.section-subhead {
+  margin: 1rem 0 0.55rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.peak-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+
+.peak-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.peak-use {
+  border-color: rgba(26, 155, 176, 0.35);
+}
+
+.peak-add {
+  border-color: rgba(217, 119, 6, 0.35);
+}
+
+.peak-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.peak-hour {
+  margin-top: 0.25rem;
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  font-weight: 700;
+}
+
+.peak-value {
+  color: var(--muted);
+  font-weight: 600;
+  margin-top: 0.15rem;
+}
+
+.peak-empty {
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.chart-box-sm {
+  height: 220px;
+}
+
+.hour-rank-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.hour-rank {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.hour-rank li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.fill-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.fill-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.fill-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+  margin-bottom: 0.65rem;
+}
+
+.fill-when {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.fill-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.fill-card-grid .fill-label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 700;
+  margin-bottom: 0.15rem;
+}
+
+.fill-card-grid strong {
+  font-size: 0.98rem;
+}
+
+@media (max-width: 768px) {
+  .fill-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .peak-row,
+  .hour-rank-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-box-sm {
+    height: 200px;
+  }
+}
+
 /* Phones / small tablets */
 @media (max-width: 768px) {
   :root {

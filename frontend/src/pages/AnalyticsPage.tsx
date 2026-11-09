@@ -4,9 +4,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -14,7 +11,11 @@ import {
 } from 'recharts';
 import { useWaterUtilization } from '../analytics/hooks/useWaterUtilization';
 import type { TankId } from '../analytics/types/tank.types';
-import { formatInKolkata } from '../analytics/engine/timeKeys';
+import {
+  clockLabelFromHour,
+  formatInKolkata,
+  hourOfDayFromHourKey,
+} from '../analytics/engine/timeKeys';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { toDateInputValue } from '../utils/units';
 
@@ -32,10 +33,12 @@ function fmtL(n: number | null | undefined): string {
 }
 
 function fmtDur(sec: number): string {
-  if (!sec) return '0 min';
+  if (!sec) return '—';
   const m = Math.round(sec / 60);
   if (m < 60) return `${m} min`;
-  return `${(m / 60).toFixed(1)} h`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem ? `${h} h ${rem} min` : `${h} h`;
 }
 
 export function AnalyticsPage() {
@@ -51,6 +54,7 @@ export function AnalyticsPage() {
   const tickProps = { fontSize: isMobile ? 10 : 12 };
 
   const { loading, error, results, tankStore } = useWaterUtilization(fromDate, toDate);
+  const isSingleDay = fromDate === toDate;
 
   function applyPreset(p: Preset) {
     setPreset(p);
@@ -96,39 +100,53 @@ export function AnalyticsPage() {
     return { consumption, refill, available, avgDaily, pumps, fillDur, configuredCount };
   }, [results, tankIds]);
 
-  const hourlyChart = useMemo(() => {
-    const map = new Map<string, { label: string; consumption: number; refill: number; t1?: number; t2?: number }>();
+  /**
+   * Always by clock hour (0–23 IST).
+   * Single day = that day's hours; multi-day = same hour summed across selected dates.
+   */
+  const hourlyByClock = useMemo(() => {
+    const byHour = new Map<number, { hour: number; label: string; consumption: number; refill: number }>();
+    for (let h = 0; h < 24; h++) {
+      byHour.set(h, { hour: h, label: clockLabelFromHour(h), consumption: 0, refill: 0 });
+    }
     for (const id of tankIds) {
-      for (const h of results[id].hourly) {
-        const row = map.get(h.hourKey) ?? { label: h.label, consumption: 0, refill: 0 };
-        row.consumption += h.consumptionL;
-        row.refill += h.netRefillL;
-        if (id === 'tank1') row.t1 = h.consumptionL;
-        if (id === 'tank2') row.t2 = h.consumptionL;
-        map.set(h.hourKey, row);
+      for (const bucket of results[id].hourly) {
+        const hour = hourOfDayFromHourKey(bucket.hourKey);
+        const row = byHour.get(hour)!;
+        row.consumption += bucket.consumptionL;
+        row.refill += bucket.netRefillL;
       }
     }
-    return [...map.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([, v]) => v);
+    return [...byHour.values()].sort((a, b) => a.hour - b.hour);
   }, [results, tankIds]);
 
-  const dailyTrend = useMemo(() => {
-    const map = new Map<string, { day: string; consumption: number; refill: number }>();
-    for (const id of tankIds) {
-      for (const d of results[id].daily) {
-        const row = map.get(d.dayKey) ?? { day: d.dayKey, consumption: 0, refill: 0 };
-        row.consumption += d.consumptionL;
-        row.refill += d.netRefillL;
-        map.set(d.dayKey, row);
-      }
-    }
-    return [...map.values()].sort((a, b) => a.day.localeCompare(b.day));
-  }, [results, tankIds]);
+  const consumptionHours = useMemo(
+    () =>
+      hourlyByClock
+        .filter((h) => h.consumption > 0)
+        .sort((a, b) => b.consumption - a.consumption),
+    [hourlyByClock]
+  );
 
-  const pumpTimeline = useMemo(() => {
+  const refillHours = useMemo(
+    () =>
+      hourlyByClock
+        .filter((h) => h.refill > 0)
+        .sort((a, b) => b.refill - a.refill),
+    [hourlyByClock]
+  );
+
+  const peakConsumption = consumptionHours[0] ?? null;
+  const peakRefill = refillHours[0] ?? null;
+
+  const fillEvents = useMemo(() => {
     return tankIds
-      .flatMap((id) => results[id].pumpEvents.map((e) => ({ ...e, tankName: tankStore.tanks[id].name })))
+      .flatMap((id) =>
+        results[id].pumpEvents.map((e) => ({
+          ...e,
+          tankName: tankStore.tanks[id].name,
+        }))
+      )
       .sort((a, b) => b.startTs - a.startTs);
   }, [results, tankIds, tankStore]);
 
@@ -154,14 +172,17 @@ export function AnalyticsPage() {
   }, [results, tankIds]);
 
   const anyConfigured = results.tank1.configured || results.tank2.configured;
+  const hourLead = isSingleDay
+    ? `Hours for ${fromDate} (Asia/Kolkata).`
+    : `Same clock hour added across ${fromDate} → ${toDate} (Asia/Kolkata), so you can see which times of day matter most.`;
 
   return (
     <>
       <section className="panel">
         <h2>Water utilization analytics</h2>
         <p className="lead">
-          All metrics are computed in the browser from raw sensor history. Filling activity is inferred
-          from rising levels — not confirmed electrical motor status.
+          Metrics are calculated in your browser from sensor history. “Tank filled” times are estimated
+          from rising water levels (not a direct motor sensor).
         </p>
 
         <div className="toolbar wrap">
@@ -229,10 +250,8 @@ export function AnalyticsPage() {
           overview.refill === 0 &&
           overview.pumps === 0 && (
             <div className="status-ok">
-              No fill/consumption events detected in this range yet. That is normal if levels stayed
-              nearly flat. Try a longer date range, or in Settings lower{' '}
-              <code>minConsumptionFallIn</code> / <code>minRefillRiseIn</code> and raise{' '}
-              <code>maxDataGapSec</code> if your device posts infrequently.
+              No clear fill or usage events in this range yet. Try a longer date range if levels were
+              mostly steady.
             </div>
           )}
       </section>
@@ -241,86 +260,177 @@ export function AnalyticsPage() {
         <h2>Overview</h2>
         <div className="stats">
           <div className="stat">
-            <div className="label">Estimated consumed</div>
+            <div className="label">Water used</div>
             <div className="value">{fmtL(overview.consumption)}</div>
           </div>
           <div className="stat">
-            <div className="label">Observed net added</div>
+            <div className="label">Water added</div>
             <div className="value">{fmtL(overview.refill)}</div>
           </div>
           <div className="stat">
-            <div className="label">Current available</div>
+            <div className="label">Available now</div>
             <div className="value">{fmtL(overview.available)}</div>
           </div>
           <div className="stat">
-            <div className="label">Avg daily consumption</div>
+            <div className="label">Avg per day</div>
             <div className="value">{fmtL(overview.avgDaily)}</div>
           </div>
           <div className="stat">
-            <div className="label">Inferred pump activations</div>
+            <div className="label">Times filled</div>
             <div className="value">{overview.pumps}</div>
           </div>
           <div className="stat">
-            <div className="label">Estimated filling duration</div>
+            <div className="label">Total fill time</div>
             <div className="value">{fmtDur(overview.fillDur)}</div>
           </div>
         </div>
       </section>
 
       <section className="panel">
-        <h2>Water utilization</h2>
-        <p className="lead">Hourly estimated consumption vs observed net refill (Asia/Kolkata).</p>
-        <div className="chart-box">
-          {hourlyChart.length === 0 ? (
-            <div className="empty">No utilization data in this range</div>
+        <h2>Usage by hour</h2>
+        <p className="lead">{hourLead}</p>
+
+        <div className="peak-row">
+          <div className="peak-card peak-use">
+            <div className="peak-title">Highest consumption</div>
+            {peakConsumption ? (
+              <>
+                <div className="peak-hour">{peakConsumption.label}</div>
+                <div className="peak-value">{fmtL(peakConsumption.consumption)}</div>
+              </>
+            ) : (
+              <div className="peak-empty">No consumption in this range</div>
+            )}
+          </div>
+          <div className="peak-card peak-add">
+            <div className="peak-title">Highest refill</div>
+            {peakRefill ? (
+              <>
+                <div className="peak-hour">{peakRefill.label}</div>
+                <div className="peak-value">{fmtL(peakRefill.refill)}</div>
+              </>
+            ) : (
+              <div className="peak-empty">No refill in this range</div>
+            )}
+          </div>
+        </div>
+
+        <h3 className="section-subhead">Consumption by hour</h3>
+        <div className="chart-box chart-box-sm">
+          {consumptionHours.length === 0 ? (
+            <div className="empty">No consumption hours</div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={hourlyChart} margin={chartMargin}>
+              <BarChart data={hourlyByClock} margin={chartMargin}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(18,37,46,0.12)" />
                 <XAxis
                   dataKey="label"
-                  minTickGap={isMobile ? 40 : 24}
+                  minTickGap={isMobile ? 18 : 10}
                   tick={tickProps}
                   interval="preserveStartEnd"
                 />
                 <YAxis width={isMobile ? 36 : 48} tick={tickProps} />
-                <Tooltip />
-                <Legend wrapperStyle={{ fontSize: isMobile ? 12 : 14 }} />
-                <Bar dataKey="consumption" name="Consumption (L)" fill="#1a9bb0" />
-                <Bar dataKey="refill" name="Net refill (L)" fill="#d97706" />
+                <Tooltip formatter={(value) => [`${Number(value).toFixed(0)} L`, 'Used']} />
+                <Bar dataKey="consumption" name="Used (L)" fill="#1a9bb0" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}
         </div>
+
+        <h3 className="section-subhead">Refill by hour</h3>
+        <div className="chart-box chart-box-sm">
+          {refillHours.length === 0 ? (
+            <div className="empty">No refill hours</div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={hourlyByClock} margin={chartMargin}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(18,37,46,0.12)" />
+                <XAxis
+                  dataKey="label"
+                  minTickGap={isMobile ? 18 : 10}
+                  tick={tickProps}
+                  interval="preserveStartEnd"
+                />
+                <YAxis width={isMobile ? 36 : 48} tick={tickProps} />
+                <Tooltip formatter={(value) => [`${Number(value).toFixed(0)} L`, 'Added']} />
+                <Bar dataKey="refill" name="Added (L)" fill="#d97706" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div className="hour-rank-grid">
+          <div>
+            <h3 className="section-subhead">Top consumption hours</h3>
+            {consumptionHours.length === 0 ? (
+              <div className="empty">—</div>
+            ) : (
+              <ol className="hour-rank">
+                {consumptionHours.slice(0, 5).map((h, i) => (
+                  <li key={`c-${h.hour}`}>
+                    <span>
+                      #{i + 1} {h.label}
+                    </span>
+                    <strong>{fmtL(h.consumption)}</strong>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+          <div>
+            <h3 className="section-subhead">Top refill hours</h3>
+            {refillHours.length === 0 ? (
+              <div className="empty">—</div>
+            ) : (
+              <ol className="hour-rank">
+                {refillHours.slice(0, 5).map((h, i) => (
+                  <li key={`r-${h.hour}`}>
+                    <span>
+                      #{i + 1} {h.label}
+                    </span>
+                    <strong>{fmtL(h.refill)}</strong>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        </div>
       </section>
 
       <section className="panel">
-        <h2>Inferred filling activity timeline</h2>
-        <p className="lead">Estimated pump activity inferred from rising water levels — not electrical confirmation.</p>
-        {pumpTimeline.length === 0 ? (
-          <div className="empty">No inferred filling events</div>
+        <h2>When tanks were filled</h2>
+        <p className="lead">Estimated from rising water level — useful to see when the pump likely ran.</p>
+        {fillEvents.length === 0 ? (
+          <div className="empty">No fill events found in this range</div>
         ) : (
-          <div className="timeline">
-            {pumpTimeline.slice(0, 40).map((e) => (
-              <div key={e.id} className="timeline-item">
-                <div className="timeline-title">
-                  {e.tankName} · {e.label}
-                  <span className={`badge badge-${e.confidence.toLowerCase()}`}>{e.confidence}</span>
-                  {e.incomplete && <span className="badge badge-low">Incomplete</span>}
+          <div className="fill-list">
+            {fillEvents.slice(0, 30).map((e) => (
+              <div key={e.id} className="fill-card">
+                <div className="fill-card-top">
+                  <strong>{e.tankName}</strong>
+                  <span className="fill-when">
+                    {formatInKolkata(e.startTs, {
+                      day: 'numeric',
+                      month: 'short',
+                      hour: 'numeric',
+                      minute: '2-digit',
+                      hour12: true,
+                    })}
+                  </span>
                 </div>
-                <div className="timeline-meta">
-                  {formatInKolkata(e.startTs, {
-                    dateStyle: 'medium',
-                    timeStyle: 'short',
-                  })}
-                  {e.endTs
-                    ? ` → ${formatInKolkata(e.endTs, { timeStyle: 'short' })}`
-                    : ' → ongoing'}
-                  {' · '}
-                  {fmtDur(e.durationSec ?? 0)}
-                  {' · '}+{(e.levelIncreaseIn ?? 0).toFixed(1)} in
-                  {' · '}
-                  {fmtL(e.estimatedNetRefillL)}
+                <div className="fill-card-grid">
+                  <div>
+                    <span className="fill-label">Ran for</span>
+                    <strong>{fmtDur(e.durationSec ?? 0)}</strong>
+                  </div>
+                  <div>
+                    <span className="fill-label">Water added</span>
+                    <strong>{fmtL(e.estimatedNetRefillL)}</strong>
+                  </div>
+                  <div>
+                    <span className="fill-label">Level rose</span>
+                    <strong>+{(e.levelIncreaseIn ?? 0).toFixed(1)} in</strong>
+                  </div>
                 </div>
               </div>
             ))}
@@ -354,15 +464,15 @@ export function AnalyticsPage() {
                       <strong>{r.totals.fillPct?.toFixed(0) ?? '—'}%</strong>
                     </li>
                     <li>
-                      <span>Estimated consumption</span>
+                      <span>Water used</span>
                       <strong>{fmtL(r.totals.consumptionL)}</strong>
                     </li>
                     <li>
-                      <span>Observed net refill</span>
+                      <span>Water added</span>
                       <strong>{fmtL(r.totals.netRefillL)}</strong>
                     </li>
                     <li>
-                      <span>Filling frequency</span>
+                      <span>Times filled</span>
                       <strong>{r.totals.pumpActivations}</strong>
                     </li>
                   </ul>
@@ -370,28 +480,6 @@ export function AnalyticsPage() {
               </div>
             );
           })}
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>Usage patterns</h2>
-        <p className="lead">Daily consumption trend and peak periods (IST).</p>
-        <div className="chart-box">
-          {dailyTrend.length === 0 ? (
-            <div className="empty">No daily pattern data</div>
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={dailyTrend} margin={chartMargin}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(18,37,46,0.12)" />
-                <XAxis dataKey="day" tick={tickProps} minTickGap={isMobile ? 28 : 16} />
-                <YAxis width={isMobile ? 36 : 48} tick={tickProps} />
-                <Tooltip />
-                <Legend wrapperStyle={{ fontSize: isMobile ? 12 : 14 }} />
-                <Line type="monotone" dataKey="consumption" name="Consumption (L)" stroke="#1a9bb0" strokeWidth={2} />
-                <Line type="monotone" dataKey="refill" name="Net refill (L)" stroke="#d97706" strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
         </div>
       </section>
 
@@ -404,8 +492,9 @@ export function AnalyticsPage() {
             {insights.map((i) => (
               <div key={i.id} className={`insight insight-${i.severity}`}>
                 <div className="insight-head">
-                  <strong>{i.tankId === 'tank1' ? tankStore.tanks.tank1.name : tankStore.tanks.tank2.name}</strong>
-                  <span className={`badge badge-${i.confidence.toLowerCase()}`}>{i.confidence}</span>
+                  <strong>
+                    {i.tankId === 'tank1' ? tankStore.tanks.tank1.name : tankStore.tanks.tank2.name}
+                  </strong>
                 </div>
                 <p>{i.description}</p>
                 {i.supporting && <p className="lead">{i.supporting}</p>}
@@ -435,14 +524,8 @@ export function AnalyticsPage() {
             <div className="value">{quality.gaps}</div>
           </div>
           <div className="stat">
-            <div className="label">Coverage (valid/total)</div>
+            <div className="label">Coverage</div>
             <div className="value">{quality.coverage.toFixed(0)}%</div>
-          </div>
-          <div className="stat">
-            <div className="label">Analytics confidence</div>
-            <div className="value">
-              {results[tankIds[0]]?.quality.overallConfidence ?? '—'}
-            </div>
           </div>
         </div>
       </section>
