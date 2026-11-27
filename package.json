@@ -8,7 +8,7 @@
   },
   "author": "",
   "license": "ISC",
-  "description": "Water level indicator API backed by Neon PostgreSQL",
+  "description": "Water level indicator API with Neon Postgres primary and file failover",
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^18.0.10",

@@ -17,6 +17,15 @@ Dashboard URL (project Pages):
 3. Keep it in Render env vars only — never commit real credentials.
 4. If a password was ever committed (e.g. in `.env.example`), **rotate it in Neon**.
 
+### Automatic failover when Neon quota is exhausted
+
+The API uses **Neon first**. If Neon fails (compute hours / connection errors), it automatically continues on a local JSON file (`waterlevels-fallback.json`) so device posts and `/api/waterlevel/latest` keep working.
+
+- Check current mode: `GET /api/health` → `{ storage: "neon" | "file", ... }`
+- While in file mode, the server retries Neon every 5 minutes (`NEON_RETRY_MS`) and switches back when healthy
+- Successful Neon inserts are also mirrored to the file (best-effort) so fallback has recent readings
+- On Render without a persistent disk, the fallback file can reset on redeploy — it is a temporary continuity layer, not long-term archive storage
+
 ## 2. Render (API)
 
 1. New **Web Service** from this repo (`https://github.com/saifquraishy/waterlevelIndicator`).
